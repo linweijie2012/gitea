@@ -14,11 +14,11 @@ import (
 	api "code.gitea.io/sdk/gitea"
 )
 
-// ListMilestones list all the milestones for a repository
+// ListMilestones list all the opened milestones for a repository
 func ListMilestones(ctx *context.APIContext) {
 	// swagger:operation GET /repos/{owner}/{repo}/milestones issue issueGetMilestonesList
 	// ---
-	// summary: Get all of a repository's milestones
+	// summary: Get all of a repository's opened milestones
 	// produces:
 	// - application/json
 	// parameters:
@@ -78,7 +78,7 @@ func GetMilestone(ctx *context.APIContext) {
 	milestone, err := models.GetMilestoneByRepoID(ctx.Repo.Repository.ID, ctx.ParamsInt64(":id"))
 	if err != nil {
 		if models.IsErrMilestoneNotExist(err) {
-			ctx.Status(404)
+			ctx.NotFound()
 		} else {
 			ctx.Error(500, "GetMilestoneByRepoID", err)
 		}
@@ -169,7 +169,7 @@ func EditMilestone(ctx *context.APIContext, form api.EditMilestoneOption) {
 	milestone, err := models.GetMilestoneByRepoID(ctx.Repo.Repository.ID, ctx.ParamsInt64(":id"))
 	if err != nil {
 		if models.IsErrMilestoneNotExist(err) {
-			ctx.Status(404)
+			ctx.NotFound()
 		} else {
 			ctx.Error(500, "GetMilestoneByRepoID", err)
 		}

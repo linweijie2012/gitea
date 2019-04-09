@@ -8,10 +8,10 @@ import (
 	"path"
 	"strings"
 
-	"code.gitea.io/git"
 	"code.gitea.io/gitea/models"
 	"code.gitea.io/gitea/modules/base"
 	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
 
@@ -201,9 +201,9 @@ func Diff(ctx *context.Context) {
 		commitID = commit.ID.String()
 	}
 
-	statuses, err := models.GetLatestCommitStatus(ctx.Repo.Repository, ctx.Repo.Commit.ID.String(), 0)
+	statuses, err := models.GetLatestCommitStatus(ctx.Repo.Repository, commitID, 0)
 	if err != nil {
-		log.Error(3, "GetLatestCommitStatus: %v", err)
+		log.Error("GetLatestCommitStatus: %v", err)
 	}
 
 	ctx.Data["CommitStatus"] = models.CalcCommitStatus(statuses)

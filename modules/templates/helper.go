@@ -193,9 +193,6 @@ func NewFuncMap() []template.FuncMap {
 		"DefaultTheme": func() string {
 			return setting.UI.DefaultTheme
 		},
-		"HeatmapColorRange": func() string {
-			return setting.UI.HeatmapColorRange
-		},
 		"dict": func(values ...interface{}) (map[string]interface{}, error) {
 			if len(values) == 0 {
 				return nil, errors.New("invalid dict call")
@@ -354,7 +351,7 @@ func RenderCommitMessageLink(msg, urlPrefix, urlDefault string, metas map[string
 	// shouldn't be any special HTML.
 	fullMessage, err := markup.RenderCommitMessage([]byte(cleanMsg), urlPrefix, urlDefault, metas)
 	if err != nil {
-		log.Error(3, "RenderCommitMessage: %v", err)
+		log.Error("RenderCommitMessage: %v", err)
 		return ""
 	}
 	msgLines := strings.Split(strings.TrimSpace(string(fullMessage)), "\n")
@@ -369,7 +366,7 @@ func RenderCommitBody(msg, urlPrefix string, metas map[string]string) template.H
 	cleanMsg := template.HTMLEscapeString(msg)
 	fullMessage, err := markup.RenderCommitMessage([]byte(cleanMsg), urlPrefix, "", metas)
 	if err != nil {
-		log.Error(3, "RenderCommitMessage: %v", err)
+		log.Error("RenderCommitMessage: %v", err)
 		return ""
 	}
 	body := strings.Split(strings.TrimSpace(string(fullMessage)), "\n")
@@ -428,7 +425,7 @@ func ActionIcon(opType models.ActionType) string {
 func ActionContent2Commits(act Actioner) *models.PushCommits {
 	push := models.NewPushCommits()
 	if err := json.Unmarshal([]byte(act.GetContent()), push); err != nil {
-		log.Error(4, "json.Unmarshal:\n%s\nERROR: %v", act.GetContent(), err)
+		log.Error("json.Unmarshal:\n%s\nERROR: %v", act.GetContent(), err)
 	}
 	return push
 }

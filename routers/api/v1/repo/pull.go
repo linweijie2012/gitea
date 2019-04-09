@@ -9,14 +9,13 @@ import (
 	"net/http"
 	"strings"
 
-	"code.gitea.io/git"
 	"code.gitea.io/gitea/models"
 	"code.gitea.io/gitea/modules/auth"
 	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/notification"
 	"code.gitea.io/gitea/modules/util"
-
 	api "code.gitea.io/sdk/gitea"
 )
 
@@ -136,7 +135,7 @@ func GetPullRequest(ctx *context.APIContext) {
 	pr, err := models.GetPullRequestByIndex(ctx.Repo.Repository.ID, ctx.ParamsInt64(":index"))
 	if err != nil {
 		if models.IsErrPullRequestNotExist(err) {
-			ctx.Status(404)
+			ctx.NotFound()
 		} else {
 			ctx.Error(500, "GetPullRequestByIndex", err)
 		}
@@ -231,7 +230,7 @@ func CreatePullRequest(ctx *context.APIContext, form api.CreatePullRequestOption
 		milestone, err := models.GetMilestoneByRepoID(ctx.Repo.Repository.ID, milestoneID)
 		if err != nil {
 			if models.IsErrMilestoneNotExist(err) {
-				ctx.Status(404)
+				ctx.NotFound()
 			} else {
 				ctx.Error(500, "GetMilestoneByRepoID", err)
 			}
@@ -341,7 +340,7 @@ func EditPullRequest(ctx *context.APIContext, form api.EditPullRequestOption) {
 	pr, err := models.GetPullRequestByIndex(ctx.Repo.Repository.ID, ctx.ParamsInt64(":index"))
 	if err != nil {
 		if models.IsErrPullRequestNotExist(err) {
-			ctx.Status(404)
+			ctx.NotFound()
 		} else {
 			ctx.Error(500, "GetPullRequestByIndex", err)
 		}
@@ -350,8 +349,9 @@ func EditPullRequest(ctx *context.APIContext, form api.EditPullRequestOption) {
 
 	pr.LoadIssue()
 	issue := pr.Issue
+	issue.Repo = ctx.Repo.Repository
 
-	if !issue.IsPoster(ctx.User.ID) && !ctx.Repo.IsWriter() {
+	if !issue.IsPoster(ctx.User.ID) && !ctx.Repo.CanWrite(models.UnitTypePullRequests) {
 		ctx.Status(403)
 		return
 	}
@@ -376,14 +376,13 @@ func EditPullRequest(ctx *context.APIContext, form api.EditPullRequestOption) {
 
 	// Add/delete assignees
 
-	// Deleting is done the Github way (quote from their api documentation):
+	// Deleting is done the GitHub way (quote from their api documentation):
 	// https://developer.github.com/v3/issues/#edit-an-issue
 	// "assignees" (array): Logins for Users to assign to this issue.
 	// Pass one or more user logins to replace the set of assignees on this Issue.
 	// Send an empty array ([]) to clear all assignees from the Issue.
 
-	if ctx.Repo.IsWriter() && (form.Assignees != nil || len(form.Assignee) > 0) {
-
+	if ctx.Repo.CanWrite(models.UnitTypePullRequests) && (form.Assignees != nil || len(form.Assignee) > 0) {
 		err = models.UpdateAPIAssignee(issue, form.Assignee, form.Assignees, ctx.User)
 		if err != nil {
 			if models.IsErrUserNotExist(err) {
@@ -395,7 +394,7 @@ func EditPullRequest(ctx *context.APIContext, form api.EditPullRequestOption) {
 		}
 	}
 
-	if ctx.Repo.IsWriter() && form.Milestone != 0 &&
+	if ctx.Repo.CanWrite(models.UnitTypePullRequests) && form.Milestone != 0 &&
 		issue.MilestoneID != form.Milestone {
 		oldMilestoneID := issue.MilestoneID
 		issue.MilestoneID = form.Milestone
@@ -405,12 +404,24 @@ func EditPullRequest(ctx *context.APIContext, form api.EditPullRequestOption) {
 		}
 	}
 
+	if ctx.Repo.CanWrite(models.UnitTypePullRequests) && form.Labels != nil {
+		labels, err := models.GetLabelsInRepoByIDs(ctx.Repo.Repository.ID, form.Labels)
+		if err != nil {
+			ctx.Error(500, "GetLabelsInRepoByIDsError", err)
+			return
+		}
+		if err = issue.ReplaceLabels(labels, ctx.User); err != nil {
+			ctx.Error(500, "ReplaceLabelsError", err)
+			return
+		}
+	}
+
 	if err = models.UpdateIssue(issue); err != nil {
 		ctx.Error(500, "UpdateIssue", err)
 		return
 	}
 	if form.State != nil {
-		if err = issue.ChangeStatus(ctx.User, ctx.Repo.Repository, api.StateClosed == api.StateType(*form.State)); err != nil {
+		if err = issue.ChangeStatus(ctx.User, api.StateClosed == api.StateType(*form.State)); err != nil {
 			if models.IsErrDependenciesLeft(err) {
 				ctx.Error(http.StatusPreconditionFailed, "DependenciesLeft", "cannot close this pull request because it still has open dependencies")
 				return
@@ -426,7 +437,7 @@ func EditPullRequest(ctx *context.APIContext, form api.EditPullRequestOption) {
 	pr, err = models.GetPullRequestByIndex(ctx.Repo.Repository.ID, pr.Index)
 	if err != nil {
 		if models.IsErrPullRequestNotExist(err) {
-			ctx.Status(404)
+			ctx.NotFound()
 		} else {
 			ctx.Error(500, "GetPullRequestByIndex", err)
 		}
@@ -469,7 +480,7 @@ func IsPullRequestMerged(ctx *context.APIContext) {
 	pr, err := models.GetPullRequestByIndex(ctx.Repo.Repository.ID, ctx.ParamsInt64(":index"))
 	if err != nil {
 		if models.IsErrPullRequestNotExist(err) {
-			ctx.Status(404)
+			ctx.NotFound()
 		} else {
 			ctx.Error(500, "GetPullRequestByIndex", err)
 		}
@@ -479,7 +490,7 @@ func IsPullRequestMerged(ctx *context.APIContext) {
 	if pr.HasMerged {
 		ctx.Status(204)
 	}
-	ctx.Status(404)
+	ctx.NotFound()
 }
 
 // MergePullRequest merges a PR given an index
@@ -506,6 +517,10 @@ func MergePullRequest(ctx *context.APIContext, form auth.MergePullRequestForm) {
 	//   type: integer
 	//   format: int64
 	//   required: true
+	// - name: body
+	//   in: body
+	//   schema:
+	//     $ref: "#/definitions/MergePullRequestOption"
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/empty"
@@ -538,7 +553,7 @@ func MergePullRequest(ctx *context.APIContext, form auth.MergePullRequestForm) {
 	}
 
 	if pr.Issue.IsClosed {
-		ctx.Status(404)
+		ctx.NotFound()
 		return
 	}
 
@@ -618,7 +633,7 @@ func parseCompareInfo(ctx *context.APIContext, form api.CreatePullRequestOption)
 		headBranch = headInfos[1]
 
 	} else {
-		ctx.Status(404)
+		ctx.NotFound()
 		return nil, nil, nil, nil, "", ""
 	}
 
@@ -627,7 +642,7 @@ func parseCompareInfo(ctx *context.APIContext, form api.CreatePullRequestOption)
 	log.Info("Repo path: %s", ctx.Repo.GitRepo.Path)
 	// Check if base branch is valid.
 	if !ctx.Repo.GitRepo.IsBranchExist(baseBranch) {
-		ctx.Status(404)
+		ctx.NotFound()
 		return nil, nil, nil, nil, "", ""
 	}
 
@@ -635,7 +650,7 @@ func parseCompareInfo(ctx *context.APIContext, form api.CreatePullRequestOption)
 	headRepo, has := models.HasForkedRepo(headUser.ID, baseRepo.ID)
 	if !has && !isSameRepo {
 		log.Trace("parseCompareInfo[%d]: does not have fork or in same repository", baseRepo.ID)
-		ctx.Status(404)
+		ctx.NotFound()
 		return nil, nil, nil, nil, "", ""
 	}
 
@@ -651,15 +666,20 @@ func parseCompareInfo(ctx *context.APIContext, form api.CreatePullRequestOption)
 		}
 	}
 
-	if !ctx.User.IsWriterOfRepo(headRepo) && !ctx.User.IsAdmin {
-		log.Trace("ParseCompareInfo[%d]: does not have write access or site admin", baseRepo.ID)
-		ctx.Status(404)
+	perm, err := models.GetUserRepoPermission(headRepo, ctx.User)
+	if err != nil {
+		ctx.ServerError("GetUserRepoPermission", err)
+		return nil, nil, nil, nil, "", ""
+	}
+	if !perm.CanReadIssuesOrPulls(true) {
+		log.Trace("ParseCompareInfo[%d]: cannot create/read pull requests", baseRepo.ID)
+		ctx.NotFound()
 		return nil, nil, nil, nil, "", ""
 	}
 
 	// Check if head branch is valid.
 	if !headGitRepo.IsBranchExist(headBranch) {
-		ctx.Status(404)
+		ctx.NotFound()
 		return nil, nil, nil, nil, "", ""
 	}
 

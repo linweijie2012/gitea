@@ -19,12 +19,13 @@ import (
 	"code.gitea.io/gitea/modules/base"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/util"
 	"github.com/Unknwon/com"
 	"github.com/go-macaron/cache"
 	"github.com/go-macaron/csrf"
 	"github.com/go-macaron/i18n"
 	"github.com/go-macaron/session"
-	macaron "gopkg.in/macaron.v1"
+	"gopkg.in/macaron.v1"
 )
 
 // Context represents context of a request.
@@ -43,6 +44,42 @@ type Context struct {
 
 	Repo *Repository
 	Org  *Organization
+}
+
+// IsUserSiteAdmin returns true if current user is a site admin
+func (ctx *Context) IsUserSiteAdmin() bool {
+	return ctx.IsSigned && ctx.User.IsAdmin
+}
+
+// IsUserRepoOwner returns true if current user owns current repo
+func (ctx *Context) IsUserRepoOwner() bool {
+	return ctx.Repo.IsOwner()
+}
+
+// IsUserRepoAdmin returns true if current user is admin in current repo
+func (ctx *Context) IsUserRepoAdmin() bool {
+	return ctx.Repo.IsAdmin()
+}
+
+// IsUserRepoWriter returns true if current user has write privilege in current repo
+func (ctx *Context) IsUserRepoWriter(unitTypes []models.UnitType) bool {
+	for _, unitType := range unitTypes {
+		if ctx.Repo.CanWrite(unitType) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsUserRepoReaderSpecific returns true if current user can read current repo's specific part
+func (ctx *Context) IsUserRepoReaderSpecific(unitType models.UnitType) bool {
+	return ctx.Repo.CanRead(unitType)
+}
+
+// IsUserRepoReaderAny returns true if current user can read any part of current repo
+func (ctx *Context) IsUserRepoReaderAny() bool {
+	return ctx.Repo.HasAccess()
 }
 
 // HasAPIError returns true if error occurs in form validation.
@@ -115,12 +152,13 @@ func (ctx *Context) RenderWithErr(msg string, tpl base.TplName, form interface{}
 // NotFound displays a 404 (Not Found) page and prints the given error, if any.
 func (ctx *Context) NotFound(title string, err error) {
 	if err != nil {
-		log.Error(4, "%s: %v", title, err)
+		log.Error("%s: %v", title, err)
 		if macaron.Env != macaron.PROD {
 			ctx.Data["ErrorMsg"] = err
 		}
 	}
 
+	ctx.Data["IsRepo"] = ctx.Repo.Repository != nil
 	ctx.Data["Title"] = "Page Not Found"
 	ctx.HTML(http.StatusNotFound, base.TplName("status/404"))
 }
@@ -129,14 +167,14 @@ func (ctx *Context) NotFound(title string, err error) {
 // error, if any.
 func (ctx *Context) ServerError(title string, err error) {
 	if err != nil {
-		log.Error(4, "%s: %v", title, err)
+		log.Error("%s: %v", title, err)
 		if macaron.Env != macaron.PROD {
 			ctx.Data["ErrorMsg"] = err
 		}
 	}
 
 	ctx.Data["Title"] = "Internal Server Error"
-	ctx.HTML(404, base.TplName("status/500"))
+	ctx.HTML(http.StatusInternalServerError, base.TplName("status/500"))
 }
 
 // NotFoundOrServerError use error check function to determine if the error
@@ -154,7 +192,7 @@ func (ctx *Context) NotFoundOrServerError(title string, errck func(error) bool, 
 // HandleText handles HTTP status code
 func (ctx *Context) HandleText(status int, title string) {
 	if (status/100 == 4) || (status/100 == 5) {
-		log.Error(4, "%s", title)
+		log.Error("%s", title)
 	}
 	ctx.PlainText(status, []byte(title))
 }
@@ -193,6 +231,7 @@ func Contexter() macaron.Handler {
 			},
 			Org: &Organization{},
 		}
+		ctx.Data["Language"] = ctx.Locale.Language()
 		c.Data["Link"] = ctx.Link
 		ctx.Data["PageStartTime"] = time.Now()
 		// Quick responses appropriate go-get meta with status 200
@@ -209,7 +248,7 @@ func Contexter() macaron.Handler {
 			if err == nil && len(repo.DefaultBranch) > 0 {
 				branchName = repo.DefaultBranch
 			}
-			prefix := setting.AppURL + path.Join(ownerName, repoName, "src", "branch", branchName)
+			prefix := setting.AppURL + path.Join(url.PathEscape(ownerName), url.PathEscape(repoName), "src", "branch", util.PathEscapeSegments(branchName))
 			c.Header().Set("Content-Type", "text/html")
 			c.WriteHeader(http.StatusOK)
 			c.Write([]byte(com.Expand(`<!doctype html>

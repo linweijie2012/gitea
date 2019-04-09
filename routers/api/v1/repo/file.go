@@ -1,4 +1,5 @@
 // Copyright 2014 The Gogs Authors. All rights reserved.
+// Copyright 2018 The Gitea Authors. All rights reserved.
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
@@ -7,9 +8,8 @@ package repo
 import (
 	"code.gitea.io/gitea/models"
 	"code.gitea.io/gitea/modules/context"
+	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/routers/repo"
-
-	"code.gitea.io/git"
 )
 
 // GetRawFile get a file by path on a repository
@@ -38,20 +38,15 @@ func GetRawFile(ctx *context.APIContext) {
 	// responses:
 	//   200:
 	//     description: success
-	if !ctx.Repo.HasAccess() {
-		ctx.Status(404)
-		return
-	}
-
-	if ctx.Repo.Repository.IsBare {
-		ctx.Status(404)
+	if ctx.Repo.Repository.IsEmpty {
+		ctx.NotFound()
 		return
 	}
 
 	blob, err := ctx.Repo.Commit.GetBlobByPath(ctx.Repo.TreePath)
 	if err != nil {
 		if git.IsErrNotExist(err) {
-			ctx.Status(404)
+			ctx.NotFound()
 		} else {
 			ctx.Error(500, "GetBlobByPath", err)
 		}
@@ -128,7 +123,7 @@ func GetEditorconfig(ctx *context.APIContext) {
 	ec, err := ctx.Repo.GetEditorconfig()
 	if err != nil {
 		if git.IsErrNotExist(err) {
-			ctx.Error(404, "GetEditorconfig", err)
+			ctx.NotFound(err)
 		} else {
 			ctx.Error(500, "GetEditorconfig", err)
 		}
@@ -138,7 +133,7 @@ func GetEditorconfig(ctx *context.APIContext) {
 	fileName := ctx.Params("filename")
 	def := ec.GetDefinitionForFilename(fileName)
 	if def == nil {
-		ctx.Error(404, "GetDefinitionForFilename", err)
+		ctx.NotFound(err)
 		return
 	}
 	ctx.JSON(200, def)

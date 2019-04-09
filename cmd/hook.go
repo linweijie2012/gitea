@@ -8,17 +8,16 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	"code.gitea.io/git"
 	"code.gitea.io/gitea/models"
+	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/private"
 	"code.gitea.io/gitea/modules/setting"
+	"code.gitea.io/gitea/modules/util"
 
 	"github.com/urfave/cli"
 )
@@ -63,12 +62,6 @@ var (
 	}
 )
 
-func hookSetup(logPath string) {
-	setting.NewContext()
-	log.NewGitLogger(filepath.Join(setting.LogRootPath, logPath))
-	models.LoadConfigs()
-}
-
 func runHookPreReceive(c *cli.Context) error {
 	if len(os.Getenv("SSH_ORIGINAL_COMMAND")) == 0 {
 		return nil
@@ -80,7 +73,7 @@ func runHookPreReceive(c *cli.Context) error {
 		setting.CustomConf = c.GlobalString("config")
 	}
 
-	hookSetup("hooks/pre-receive.log")
+	setup("hooks/pre-receive.log")
 
 	// the environment setted on serv command
 	repoID, _ := strconv.ParseInt(os.Getenv(models.ProtectedBranchRepoID), 10, 64)
@@ -113,10 +106,15 @@ func runHookPreReceive(c *cli.Context) error {
 		branchName := strings.TrimPrefix(refFullName, git.BranchPrefix)
 		protectBranch, err := private.GetProtectedBranchBy(repoID, branchName)
 		if err != nil {
-			log.GitLogger.Fatal(2, "retrieve protected branches information failed")
+			fail("Internal error", fmt.Sprintf("retrieve protected branches information failed: %v", err))
 		}
 
 		if protectBranch != nil && protectBranch.IsProtected() {
+			// check and deletion
+			if newCommitID == git.EmptySHA {
+				fail(fmt.Sprintf("branch %s is protected from deletion", branchName), "")
+			}
+
 			// detect force push
 			if git.EmptySHA != oldCommitID {
 				output, err := git.NewCommand("rev-list", "--max-count=1", oldCommitID, "^"+newCommitID).RunInDir(repoPath)
@@ -127,17 +125,12 @@ func runHookPreReceive(c *cli.Context) error {
 				}
 			}
 
-			// check and deletion
-			if newCommitID == git.EmptySHA {
-				fail(fmt.Sprintf("branch %s is protected from deletion", branchName), "")
-			} else {
-				userID, _ := strconv.ParseInt(userIDStr, 10, 64)
-				canPush, err := private.CanUserPush(protectBranch.ID, userID)
-				if err != nil {
-					fail("Internal error", "Fail to detect user can push: %v", err)
-				} else if !canPush {
-					fail(fmt.Sprintf("protected branch %s can not be pushed to", branchName), "")
-				}
+			userID, _ := strconv.ParseInt(userIDStr, 10, 64)
+			canPush, err := private.CanUserPush(protectBranch.ID, userID)
+			if err != nil {
+				fail("Internal error", "Fail to detect user can push: %v", err)
+			} else if !canPush {
+				fail(fmt.Sprintf("protected branch %s can not be pushed to", branchName), "")
 			}
 		}
 	}
@@ -156,7 +149,7 @@ func runHookUpdate(c *cli.Context) error {
 		setting.CustomConf = c.GlobalString("config")
 	}
 
-	hookSetup("hooks/update.log")
+	setup("hooks/update.log")
 
 	return nil
 }
@@ -172,7 +165,7 @@ func runHookPostReceive(c *cli.Context) error {
 		setting.CustomConf = c.GlobalString("config")
 	}
 
-	hookSetup("hooks/post-receive.log")
+	setup("hooks/post-receive.log")
 
 	// the environment setted on serv command
 	repoID, _ := strconv.ParseInt(os.Getenv(models.ProtectedBranchRepoID), 10, 64)
@@ -211,14 +204,14 @@ func runHookPostReceive(c *cli.Context) error {
 			RepoUserName: repoUser,
 			RepoName:     repoName,
 		}); err != nil {
-			log.GitLogger.Error(2, "Update: %v", err)
+			log.GitLogger.Error("Update: %v", err)
 		}
 
 		if newCommitID != git.EmptySHA && strings.HasPrefix(refFullName, git.BranchPrefix) {
 			branch := strings.TrimPrefix(refFullName, git.BranchPrefix)
 			repo, pullRequestAllowed, err := private.GetRepository(repoID)
 			if err != nil {
-				log.GitLogger.Error(2, "get repo: %v", err)
+				log.GitLogger.Error("get repo: %v", err)
 				break
 			}
 			if !pullRequestAllowed {
@@ -236,7 +229,7 @@ func runHookPostReceive(c *cli.Context) error {
 
 			pr, err := private.ActivePullRequest(baseRepo.ID, repo.ID, baseRepo.DefaultBranch, branch)
 			if err != nil {
-				log.GitLogger.Error(2, "get active pr: %v", err)
+				log.GitLogger.Error("get active pr: %v", err)
 				break
 			}
 
@@ -246,7 +239,7 @@ func runHookPostReceive(c *cli.Context) error {
 					branch = fmt.Sprintf("%s:%s", repo.OwnerName, branch)
 				}
 				fmt.Fprintf(os.Stderr, "Create a new pull request for '%s':\n", branch)
-				fmt.Fprintf(os.Stderr, "  %s/compare/%s...%s\n", baseRepo.HTMLURL(), url.QueryEscape(baseRepo.DefaultBranch), url.QueryEscape(branch))
+				fmt.Fprintf(os.Stderr, "  %s/compare/%s...%s\n", baseRepo.HTMLURL(), util.PathEscapeSegments(baseRepo.DefaultBranch), util.PathEscapeSegments(branch))
 			} else {
 				fmt.Fprint(os.Stderr, "Visit the existing pull request:\n")
 				fmt.Fprintf(os.Stderr, "  %s/pulls/%d\n", baseRepo.HTMLURL(), pr.Index)

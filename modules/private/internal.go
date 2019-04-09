@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 
 	"code.gitea.io/gitea/models"
 	"code.gitea.io/gitea/modules/httplib"
@@ -39,6 +40,7 @@ func decodeJSONError(resp *http.Response) *Response {
 func newInternalRequest(url, method string) *httplib.Request {
 	req := newRequest(url, method).SetTLSClientConfig(&tls.Config{
 		InsecureSkipVerify: true,
+		ServerName:         setting.Domain,
 	})
 	if setting.Protocol == setting.UnixSocket {
 		req.SetTransport(&http.Transport{
@@ -51,27 +53,9 @@ func newInternalRequest(url, method string) *httplib.Request {
 }
 
 // CheckUnitUser check whether user could visit the unit of this repository
-func CheckUnitUser(userID, repoID int64, isAdmin bool, unitType models.UnitType) (bool, error) {
+func CheckUnitUser(userID, repoID int64, isAdmin bool, unitType models.UnitType) (*models.AccessMode, error) {
 	reqURL := setting.LocalURL + fmt.Sprintf("api/internal/repositories/%d/user/%d/checkunituser?isAdmin=%t&unitType=%d", repoID, userID, isAdmin, unitType)
-	log.GitLogger.Trace("AccessLevel: %s", reqURL)
-
-	resp, err := newInternalRequest(reqURL, "GET").Response()
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 200 {
-		return true, nil
-	}
-	return false, nil
-}
-
-// AccessLevel returns the Access a user has to a repository. Will return NoneAccess if the
-// user does not have access.
-func AccessLevel(userID, repoID int64) (*models.AccessMode, error) {
-	reqURL := setting.LocalURL + fmt.Sprintf("api/internal/repositories/%d/user/%d/accesslevel", repoID, userID)
-	log.GitLogger.Trace("AccessLevel: %s", reqURL)
+	log.GitLogger.Trace("CheckUnitUser: %s", reqURL)
 
 	resp, err := newInternalRequest(reqURL, "GET").Response()
 	if err != nil {
@@ -80,7 +64,7 @@ func AccessLevel(userID, repoID int64) (*models.AccessMode, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Failed to get user access level: %s", decodeJSONError(resp).Err)
+		return nil, fmt.Errorf("Failed to CheckUnitUser: %s", decodeJSONError(resp).Err)
 	}
 
 	var a models.AccessMode
@@ -93,7 +77,7 @@ func AccessLevel(userID, repoID int64) (*models.AccessMode, error) {
 
 // GetRepositoryByOwnerAndName returns the repository by given ownername and reponame.
 func GetRepositoryByOwnerAndName(ownerName, repoName string) (*models.Repository, error) {
-	reqURL := setting.LocalURL + fmt.Sprintf("api/internal/repo/%s/%s", ownerName, repoName)
+	reqURL := setting.LocalURL + fmt.Sprintf("api/internal/repo/%s/%s", url.PathEscape(ownerName), url.PathEscape(repoName))
 	log.GitLogger.Trace("GetRepositoryByOwnerAndName: %s", reqURL)
 
 	resp, err := newInternalRequest(reqURL, "GET").Response()
